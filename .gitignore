@@ -1,0 +1,17 @@
+# Secrets
+.env
+.env.*
+*.key
+*.pem
+
+# Local Claude Code settings
+.claude/settings.local.json
+
+# OS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
