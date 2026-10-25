@@ -48,6 +48,14 @@ security add-generic-password -a "$USER" -s gh-agent-token -w
 
 Containers get it as `GH_TOKEN`. `gh` and git (HTTPS) both use it. Clone with `https://` URLs, not SSH.
 
+## Linear API Key (optional)
+
+```bash
+security add-generic-password -a "$USER" -s linear-agent-token -w
+```
+
+If the item exists, containers get it as `LINEAR_API_KEY`; if not, the container runs without it. Use `-l` to read a different Keychain item.
+
 ## Run
 
 Link the script into your PATH once:
@@ -63,10 +71,11 @@ agent-run                      # claude, container claude-<folder>
 agent-run -m opus              # pick a model
 agent-run -a codex             # another agent (image codex-box)
 agent-run -k gh-other-token    # another Keychain item
+agent-run -l linear-other      # another Linear Keychain item
 agent-run my-name              # custom container suffix
 ```
 
-If the container exists, it is started and attached. `-m` and `-k` only apply when creating it; to change them, `docker rm -f <agent>-<name>` and run again.
+If the container exists, it is started and attached. `-m`, `-k` and `-l` only apply when creating it; to change them, `docker rm -f <agent>-<name>` and run again.
 
 The script runs:
 

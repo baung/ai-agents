@@ -4,15 +4,16 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<EOF
-Usage: $(basename "$0") [-a agent] [-m model] [-k keychain-item] [name]
+Usage: $(basename "$0") [-a agent] [-m model] [-k keychain-item] [-l keychain-item] [name]
 
   -a agent          Agent to run; uses image <agent>-box (default: claude)
   -m model          Model passed to the agent as --model (default: agent's default)
   -k keychain-item  Keychain item holding the GitHub token (default: gh-agent-token)
+  -l keychain-item  Keychain item holding the Linear API key, optional (default: linear-agent-token)
   name              Container name suffix (default: current folder name)
 
 The container is named <agent>-<name> and mounts the current folder at /workspace.
-If it already exists, it is started and attached; -m and -k only apply when creating it.
+If it already exists, it is started and attached; -m, -k and -l only apply when creating it.
 EOF
   exit 1
 }
@@ -20,11 +21,13 @@ EOF
 agent=claude
 model=
 key=gh-agent-token
-while getopts "a:m:k:h" opt; do
+linear_key=linear-agent-token
+while getopts "a:m:k:l:h" opt; do
   case $opt in
     a) agent=$OPTARG ;;
     m) model=$OPTARG ;;
     k) key=$OPTARG ;;
+    l) linear_key=$OPTARG ;;
     *) usage ;;
   esac
 done
@@ -55,12 +58,18 @@ else
     exit 1
   fi
   export GH_TOKEN
+  env=(-e GH_TOKEN)
+  # Optional: only passed if the Keychain item exists
+  if LINEAR_API_KEY=$(security find-generic-password -s "$linear_key" -w 2>/dev/null); then
+    export LINEAR_API_KEY
+    env+=(-e LINEAR_API_KEY)
+  fi
   cmd=()
   [ -z "$model" ] || cmd=("$agent" --model "$model")
   docker run -dit --name "$container" \
     -v "$PWD":/workspace \
     -v "$agent-config":"/home/vscode/.$agent" \
-    -e GH_TOKEN \
+    "${env[@]}" \
     "$agent-box" ${cmd[@]+"${cmd[@]}"} >/dev/null
 fi
 
