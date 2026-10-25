@@ -2,7 +2,7 @@ FROM claude-box
 USER root
 
 # .NET 8 SDK via the official install script; Microsoft's Debian apt repo has no arm64 packages
-RUN apt-get update && apt-get install -y --no-install-recommends libicu-dev \
+RUN apt-get update && apt-get install -y --no-install-recommends libicu-dev bzip2 \
  && rm -rf /var/lib/apt/lists/* \
  && curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0 --install-dir /usr/share/dotnet \
  && ln -s /usr/share/dotnet/dotnet /usr/local/bin/dotnet
@@ -12,6 +12,10 @@ COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/
 COPY --from=node:22-bookworm-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+
+# sqlcmd (go-sqlcmd) for the SQL Server sidecar started by agent-run -d
+RUN curl -fsSL "https://github.com/microsoft/go-sqlcmd/releases/latest/download/sqlcmd-linux-$(dpkg --print-architecture).tar.bz2" \
+  | tar -xj -C /usr/local/bin sqlcmd
 
 USER vscode
 ENV DOTNET_ROOT=/usr/share/dotnet \

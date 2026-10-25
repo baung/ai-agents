@@ -4,17 +4,20 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<EOF
-Usage: $(basename "$0") [-a agent] [-i image] [-m model] [-k keychain-item] [-l keychain-item] [name]
+Usage: $(basename "$0") [-a agent] [-i image] [-m model] [-k keychain-item] [-l keychain-item] [-d] [name]
 
   -a agent          Agent to run; uses image <agent>-box (default: claude)
   -i image          Image variant to run instead, e.g. claude-dotnet-node; uses image <image>-box
   -m model         Model passed to the agent as --model (default: agent's default)
   -k keychain-item  Keychain item holding the GitHub token (default: gh-agent-token)
   -l keychain-item  Keychain item holding the Linear API key, optional (default: linear-agent-token)
+  -d                Also run SQL Server as container mssql-<name> on network agent-<name>;
+                    SA password from Keychain item mssql-agent-sa
   name              Container name suffix (default: current folder name)
 
 The container is named <image>-<name> (<agent>-<name> without -i) and mounts the current folder at /workspace.
-If it already exists, it is started and attached; -m, -k and -l only apply when creating it.
+If it already exists, it is started and attached; -m, -k, -l and -d only apply when creating it.
+A container created with -d starts its SQL Server container on later runs.
 EOF
   exit 1
 }
@@ -24,13 +27,17 @@ image=
 model=
 key=gh-agent-token
 linear_key=linear-agent-token
-while getopts "a:i:m:k:l:h" opt; do
+db=false
+db_key=mssql-agent-sa
+db_image=mcr.microsoft.com/mssql/server:2022-latest
+while getopts "a:i:m:k:l:dh" opt; do
   case $opt in
     a) agent=$OPTARG ;;
     i) image=$OPTARG ;;
     m) model=$OPTARG ;;
     k) key=$OPTARG ;;
     l) linear_key=$OPTARG ;;
+    d) db=true ;;
     *) usage ;;
   esac
 done
@@ -41,8 +48,45 @@ image=${image:-$agent}
 # Docker names allow [a-zA-Z0-9_.-]
 name=$(printf '%s' "${1:-$(basename "$PWD")}" | tr -c 'a-zA-Z0-9_.-' '-')
 container="$image-$name"
+network="agent-$name"
+db_container="mssql-$name"
+
+sa_password() {
+  security find-generic-password -s "$db_key" -w 2>/dev/null \
+    || { echo "Keychain item '$db_key' not found" >&2; exit 1; }
+}
 
 running=$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || true)
+
+# An existing container on the network was created with -d
+if [ -n "$running" ]; then
+  on_network=false
+  docker inspect -f '{{range $net, $_ := .NetworkSettings.Networks}}{{$net}}{{"\n"}}{{end}}' "$container" \
+    | grep -qx "$network" && on_network=true
+  if $db && ! $on_network; then
+    echo "Error: $container was created without -d. Recreate with: docker rm -f $container" >&2
+    exit 1
+  fi
+  db=$on_network
+fi
+
+if $db; then
+  docker network inspect "$network" >/dev/null 2>&1 || docker network create "$network" >/dev/null
+  db_running=$(docker inspect -f '{{.State.Running}}' "$db_container" 2>/dev/null || true)
+  if [ -z "$db_running" ]; then
+    MSSQL_SA_PASSWORD=$(sa_password)
+    export MSSQL_SA_PASSWORD
+    # No arm64 build; runs under Rosetta on Apple Silicon
+    docker run -d --name "$db_container" --platform linux/amd64 \
+      --network "$network" \
+      -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD \
+      -v "$db_container-data":/var/opt/mssql \
+      "$db_image" >/dev/null
+    echo "Started $db_container. SQL Server takes a few seconds to accept connections."
+  elif [ "$db_running" != true ]; then
+    docker start "$db_container" >/dev/null
+  fi
+fi
 
 if [ -n "$running" ]; then
   mounted=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Source}}{{end}}{{end}}' "$container")
@@ -68,12 +112,19 @@ else
     export LINEAR_API_KEY
     env+=(-e LINEAR_API_KEY)
   fi
+  net=()
+  if $db; then
+    MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD:-$(sa_password)}
+    export MSSQL_SA_PASSWORD
+    env+=(-e MSSQL_HOST="$db_container" -e MSSQL_SA_PASSWORD)
+    net=(--network "$network")
+  fi
   cmd=()
   [ -z "$model" ] || cmd=("$agent" --model "$model")
   docker run -dit --name "$container" \
     -v "$PWD":/workspace \
     -v "$agent-config":"/home/vscode/.$agent" \
-    "${env[@]}" \
+    "${env[@]}" ${net[@]+"${net[@]}"} \
     "$image-box" ${cmd[@]+"${cmd[@]}"} >/dev/null
 fi
 

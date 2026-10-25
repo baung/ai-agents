@@ -8,7 +8,7 @@ Run AI coding agents in isolated Docker containers. Each agent has its own image
 ~/docker/
 ├── base/Dockerfile      # shared OS, user, tools
 ├── claude/Dockerfile    # Claude Code
-├── claude-dotnet-node/  # claude-box plus .NET 8 SDK, Node.js 22, dotnet-ef
+├── claude-dotnet-node/  # claude-box plus .NET 8 SDK, Node.js 22, dotnet-ef, sqlcmd
 └── <agent>/Dockerfile   # one folder per additional agent
 ```
 
@@ -60,6 +60,38 @@ security add-generic-password -a "$USER" -s linear-agent-token -w
 
 If the item exists, containers get it as `LINEAR_API_KEY`; if not, the container runs without it. Use `-l` to read a different Keychain item.
 
+## SQL Server (optional)
+
+`agent-run -d` runs SQL Server 2022 in its own container next to the agent:
+
+```
+network agent-<folder>
+├── <image>-<folder>    agent; gets MSSQL_HOST and MSSQL_SA_PASSWORD
+└── mssql-<folder>      mcr.microsoft.com/mssql/server:2022-latest, data in volume mssql-<folder>-data
+```
+
+Setup, once:
+
+1. Docker Desktop → Settings → General → enable "Use Rosetta for x86_64/amd64 emulation on Apple Silicon". SQL Server has no arm64 build, so it runs emulated and slower than native.
+2. Store an SA password. It must be at least 8 characters and use three of: uppercase, lowercase, digits, symbols.
+
+   ```bash
+   security add-generic-password -a "$USER" -s mssql-agent-sa -w
+   ```
+
+From the agent container (`claude-dotnet-node` includes `sqlcmd`):
+
+```bash
+sqlcmd -S "$MSSQL_HOST" -U sa -P "$MSSQL_SA_PASSWORD" -C -Q "SELECT @@VERSION"
+```
+
+Connection string: `Server=mssql-<folder>,1433;User Id=sa;Password=<password>;TrustServerCertificate=True`
+
+- SQL Server takes a few seconds to accept connections after starting.
+- The SA password is set when the data volume is first created. Changing the Keychain item later doesn't change it; reset the database instead.
+- Reset: `docker rm -f mssql-<folder> && docker volume rm mssql-<folder>-data`, then `agent-run` again.
+- The database isn't reachable from the host. To connect from a host tool, add `-p 1433:1433` to its `docker run` in `bin/agent-run`.
+
 ## Run
 
 Link the script into your PATH once:
@@ -77,10 +109,11 @@ agent-run -a codex             # another agent (image codex-box)
 agent-run -i claude-dotnet-node   # image variant, container claude-dotnet-node-<folder>
 agent-run -k gh-other-token    # another Keychain item
 agent-run -l linear-other      # another Linear Keychain item
+agent-run -d -i claude-dotnet-node   # with a SQL Server container; see SQL Server
 agent-run my-name              # custom container suffix
 ```
 
-If the container exists, it is started and attached. `-m`, `-k` and `-l` only apply when creating it; to change them, `docker rm -f <agent>-<name>` and run again.
+If the container exists, it is started and attached. `-m`, `-k`, `-l` and `-d` only apply when creating it; to change them, `docker rm -f <image>-<name>` and run again. A container created with `-d` starts its SQL Server container on later runs.
 
 The script runs:
 
