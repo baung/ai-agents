@@ -3,6 +3,8 @@ FROM agent-base
 ARG VERSION=latest
 RUN curl -fsSL https://claude.ai/install.sh | bash -s -- "$VERSION" \
  && mkdir -p /home/vscode/.claude
+# Outside the claude-config volume, so it applies in every container
+COPY managed-settings.json /etc/claude-code/managed-settings.json
 ENV PATH="/home/vscode/.local/bin:${PATH}" \
     CLAUDE_CONFIG_DIR="/home/vscode/.claude"
 CMD ["claude"]
