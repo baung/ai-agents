@@ -22,22 +22,68 @@ docker build -t claude-box ~/docker/claude
 
 Rebuild the base after changing it, then rebuild each agent.
 
+## Update
+
+Docker caches the install step, so a plain rebuild keeps the old agent version. To update:
+
+```bash
+agent-update                   # rebuild agent-base and claude-box with the latest Claude
+agent-update -v 2.1.0          # pin a version
+agent-update -a codex          # another agent (image codex-box)
+```
+
+Each agent Dockerfile takes `ARG VERSION=latest` and passes it to its installer. With `latest`, the agent image is rebuilt without the cache.
+
+Existing containers keep the old image. The script lists them; recreate each with `docker rm -f <name>` and `agent-run`. Login and settings persist in the config volume.
+
+Link it like `agent-run`: `ln -s ~/development/ai-agents/bin/agent-update ~/.local/bin/agent-update`
+
+## GitHub Token
+
+Store a GitHub token in the macOS Keychain (prompts for the token):
+
+```bash
+security add-generic-password -a "$USER" -s gh-agent-token -w
+```
+
+Containers get it as `GH_TOKEN`. `gh` and git (HTTPS) both use it. Clone with `https://` URLs, not SSH.
+
 ## Run
+
+Link the script into your PATH once:
+
+```bash
+ln -s ~/development/ai-agents/bin/agent-run ~/.local/bin/agent-run
+```
 
 From your project folder:
 
 ```bash
+agent-run                      # claude, container claude-<folder>
+agent-run -m opus              # pick a model
+agent-run -a codex             # another agent (image codex-box)
+agent-run -k gh-other-token    # another Keychain item
+agent-run my-name              # custom container suffix
+```
+
+If the container exists, it is started and attached. `-m` and `-k` only apply when creating it; to change them, `docker rm -f <agent>-<name>` and run again.
+
+The script runs:
+
+```bash
+GH_TOKEN=$(security find-generic-password -s gh-agent-token -w) \
 docker run -dit --name claude-<project> \
   -v "$PWD":/workspace \
   -v claude-config:/home/vscode/.claude \
+  -e GH_TOKEN \
   claude-box
 ```
 
 - `-dit`: runs in the background with a terminal; survives SSH disconnects
 - `"$PWD":/workspace`: mounts the current project
-- `claude-config`: keeps login and settings between runs
+- `<agent>-config`: keeps login and settings between runs, mounted at `/home/vscode/.<agent>`
 
-**Sign in:** on first run, open the login URL Claude shows. For API billing, add `-e ANTHROPIC_API_KEY` to pass the key from your host environment.
+**Sign in:** on first run, open the login URL Claude shows. For API billing, add `-e ANTHROPIC_API_KEY` to the `docker run` in `bin/agent-run`.
 
 ## Daily Use
 
@@ -54,9 +100,11 @@ docker run -dit --name claude-<project> \
 ## Add an Agent
 
 1. Create `~/docker/<agent>/Dockerfile` starting with `FROM agent-base`.
-2. Install the agent's CLI, create its config folder, set `CMD`.
-3. Build: `docker build -t <agent>-box ~/docker/<agent>`
-4. Run with its own config volume (`<agent>-config`) and API key.
+2. Declare `ARG VERSION=latest` and install that version of the agent's CLI (e.g. `npm install -g @openai/codex@"$VERSION"`). Create its config folder and set `CMD`.
+3. Build: `agent-update -a <agent>`
+4. Run: `agent-run -a <agent>`
+
+`agent-run` expects the image to be `<agent>-box`, the CLI command to be `<agent>` and accept `--model`, and the config folder to be `/home/vscode/.<agent>`.
 
 Never put API keys in a Dockerfile.
 

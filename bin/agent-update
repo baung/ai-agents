@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Rebuild agent-base and an agent image to pick up the latest agent version.
+set -euo pipefail
+
+usage() {
+  cat >&2 <<EOF
+Usage: $(basename "$0") [-a agent] [-v version]
+
+  -a agent    Agent to rebuild; builds <agent>/Dockerfile as image <agent>-box (default: claude)
+  -v version  Version passed as build arg VERSION (default: latest)
+
+With the default version, the agent image is rebuilt without the cache so the install step reruns.
+Existing containers keep the old image until recreated.
+EOF
+  exit 1
+}
+
+agent=claude
+version=latest
+while getopts "a:v:h" opt; do
+  case $opt in
+    a) agent=$OPTARG ;;
+    v) version=$OPTARG ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND - 1))
+[ $# -eq 0 ] || usage
+
+# Resolve the repo root through the ~/.local/bin symlink
+root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+[ -f "$root/$agent/Dockerfile" ] || { echo "No Dockerfile at $root/$agent" >&2; exit 1; }
+
+cache=()
+[ "$version" != latest ] || cache=(--no-cache)
+
+docker build --pull -t agent-base "$root/base"
+docker build ${cache[@]+"${cache[@]}"} --build-arg "VERSION=$version" -t "$agent-box" "$root/$agent"
+
+image=$(docker image inspect -f '{{.Id}}' "$agent-box")
+stale=$(docker ps -a --filter "name=^$agent-" --format '{{.Names}} {{.Image}}' \
+  | while read -r name img; do
+      [ "$(docker inspect -f '{{.Image}}' "$name")" = "$image" ] || echo "$name"
+    done)
+if [ -n "$stale" ]; then
+  echo "These containers still use the old image. Recreate with docker rm -f <name>, then agent-run:"
+  echo "$stale" | sed 's/^/  /'
+fi
