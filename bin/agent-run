@@ -4,27 +4,30 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<EOF
-Usage: $(basename "$0") [-a agent] [-m model] [-k keychain-item] [-l keychain-item] [name]
+Usage: $(basename "$0") [-a agent] [-i image] [-m model] [-k keychain-item] [-l keychain-item] [name]
 
   -a agent          Agent to run; uses image <agent>-box (default: claude)
-  -m model          Model passed to the agent as --model (default: agent's default)
+  -i image          Image variant to run instead, e.g. claude-dotnet-node; uses image <image>-box
+  -m model         Model passed to the agent as --model (default: agent's default)
   -k keychain-item  Keychain item holding the GitHub token (default: gh-agent-token)
   -l keychain-item  Keychain item holding the Linear API key, optional (default: linear-agent-token)
   name              Container name suffix (default: current folder name)
 
-The container is named <agent>-<name> and mounts the current folder at /workspace.
+The container is named <image>-<name> (<agent>-<name> without -i) and mounts the current folder at /workspace.
 If it already exists, it is started and attached; -m, -k and -l only apply when creating it.
 EOF
   exit 1
 }
 
 agent=claude
+image=
 model=
 key=gh-agent-token
 linear_key=linear-agent-token
-while getopts "a:m:k:l:h" opt; do
+while getopts "a:i:m:k:l:h" opt; do
   case $opt in
     a) agent=$OPTARG ;;
+    i) image=$OPTARG ;;
     m) model=$OPTARG ;;
     k) key=$OPTARG ;;
     l) linear_key=$OPTARG ;;
@@ -33,10 +36,11 @@ while getopts "a:m:k:l:h" opt; do
 done
 shift $((OPTIND - 1))
 [ $# -le 1 ] || usage
+image=${image:-$agent}
 
 # Docker names allow [a-zA-Z0-9_.-]
 name=$(printf '%s' "${1:-$(basename "$PWD")}" | tr -c 'a-zA-Z0-9_.-' '-')
-container="$agent-$name"
+container="$image-$name"
 
 running=$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || true)
 
@@ -70,7 +74,7 @@ else
     -v "$PWD":/workspace \
     -v "$agent-config":"/home/vscode/.$agent" \
     "${env[@]}" \
-    "$agent-box" ${cmd[@]+"${cmd[@]}"} >/dev/null
+    "$image-box" ${cmd[@]+"${cmd[@]}"} >/dev/null
 fi
 
 echo "Attaching to $container. Detach with Ctrl+p then Ctrl+q."

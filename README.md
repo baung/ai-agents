@@ -8,6 +8,7 @@ Run AI coding agents in isolated Docker containers. Each agent has its own image
 ~/docker/
 ├── base/Dockerfile      # shared OS, user, tools
 ├── claude/Dockerfile    # Claude Code
+├── claude-dotnet-node/  # claude-box plus .NET 8 SDK, Node.js 22, dotnet-ef
 └── <agent>/Dockerfile   # one folder per additional agent
 ```
 
@@ -30,9 +31,12 @@ Docker caches the install step, so a plain rebuild keeps the old agent version. 
 agent-update                   # rebuild agent-base and claude-box with the latest Claude
 agent-update -v 2.1.0          # pin a version
 agent-update -a codex          # another agent (image codex-box)
+agent-update -i claude-dotnet-node   # an image variant; rebuilds claude-box first
 ```
 
 Each agent Dockerfile takes `ARG VERSION=latest` and passes it to its installer. With `latest`, the agent image is rebuilt without the cache.
+
+For an image built `FROM <name>-box`, the script rebuilds that image first and pulls any `COPY --from=<image>:<tag>` sources, so `node:22-bookworm-slim` stays on the latest 22.x.
 
 Existing containers keep the old image. The script lists them; recreate each with `docker rm -f <name>` and `agent-run`. Login and settings persist in the config volume.
 
@@ -70,6 +74,7 @@ From your project folder:
 agent-run                      # claude, container claude-<folder>
 agent-run -m opus              # pick a model
 agent-run -a codex             # another agent (image codex-box)
+agent-run -i claude-dotnet-node   # image variant, container claude-dotnet-node-<folder>
 agent-run -k gh-other-token    # another Keychain item
 agent-run -l linear-other      # another Linear Keychain item
 agent-run my-name              # custom container suffix
@@ -116,6 +121,16 @@ docker run -dit --name claude-<project> \
 `agent-run` expects the image to be `<agent>-box`, the CLI command to be `<agent>` and accept `--model`, and the config folder to be `/home/vscode/.<agent>`.
 
 Never put API keys in a Dockerfile.
+
+## Add an Image Variant
+
+For an agent image with extra tools that several projects share, like `claude-dotnet-node`:
+
+1. Create `<image>/Dockerfile` starting with `FROM <agent>-box`. Switch to `USER root` for installs and back to `USER vscode` at the end.
+2. Build: `agent-update -i <image>`
+3. Run: `agent-run -i <image>`
+
+The variant runs the same agent CLI and shares its config volume, so login carries over.
 
 ## Add Project Tools
 

@@ -4,11 +4,13 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<EOF
-Usage: $(basename "$0") [-a agent] [-v version]
+Usage: $(basename "$0") [-a agent] [-i image] [-v version]
 
   -a agent    Agent to rebuild; builds <agent>/Dockerfile as image <agent>-box (default: claude)
-  -v version  Version passed as build arg VERSION (default: latest)
+  -i image    Image variant to rebuild instead, e.g. claude-dotnet-node; builds <image>/Dockerfile as <image>-box
+  -v version  Version passed as build arg VERSION to the agent image (default: latest)
 
+Images built FROM another <name>-box in this repo rebuild that image first.
 With the default version, the agent image is rebuilt without the cache so the install step reruns.
 Existing containers keep the old image until recreated.
 EOF
@@ -16,33 +18,62 @@ EOF
 }
 
 agent=claude
+image=
 version=latest
-while getopts "a:v:h" opt; do
+while getopts "a:i:v:h" opt; do
   case $opt in
     a) agent=$OPTARG ;;
+    i) image=$OPTARG ;;
     v) version=$OPTARG ;;
     *) usage ;;
   esac
 done
 shift $((OPTIND - 1))
 [ $# -eq 0 ] || usage
+image=${image:-$agent}
 
 # Resolve the repo root through the ~/.local/bin symlink
 root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
-[ -f "$root/$agent/Dockerfile" ] || { echo "No Dockerfile at $root/$agent" >&2; exit 1; }
 
-cache=()
-[ "$version" != latest ] || cache=(--no-cache)
+built=()
+build() {
+  local dir=$1 from parent
+  [ -f "$root/$dir/Dockerfile" ] || { echo "No Dockerfile at $root/$dir" >&2; exit 1; }
+  from=$(awk 'toupper($1) == "FROM" { print $2; exit }' "$root/$dir/Dockerfile")
+  parent=${from%-box}
+  if [ "$from" = agent-base ]; then
+    # Agent image: rebuild without the cache for latest so the install step reruns
+    local cache=()
+    [ "$version" != latest ] || cache=(--no-cache)
+    docker build ${cache[@]+"${cache[@]}"} --build-arg "VERSION=$version" -t "$dir-box" "$root/$dir"
+  else
+    if [ "$parent" != "$from" ] && [ -f "$root/$parent/Dockerfile" ]; then
+      build "$parent"
+    fi
+    # --pull would fail on local-only parents, so pull COPY --from images directly
+    local src
+    for src in $(grep -o -- '--from=[^ ]*:[^ ]*' "$root/$dir/Dockerfile" | cut -d= -f2 | sort -u); do
+      docker pull "$src"
+    done
+    docker build -t "$dir-box" "$root/$dir"
+  fi
+  built+=("$dir-box")
+}
 
 docker build --pull -t agent-base "$root/base"
-docker build ${cache[@]+"${cache[@]}"} --build-arg "VERSION=$version" -t "$agent-box" "$root/$agent"
+build "$image"
 
-image=$(docker image inspect -f '{{.Id}}' "$agent-box")
-stale=$(docker ps -a --filter "name=^$agent-" --format '{{.Names}} {{.Image}}' \
-  | while read -r name img; do
-      [ "$(docker inspect -f '{{.Image}}' "$name")" = "$image" ] || echo "$name"
+ids=$(docker ps -aq)
+[ -n "$ids" ] || exit 0
+stale=$(docker inspect -f '{{.Name}} {{.Config.Image}} {{.Image}}' $ids \
+  | while read -r name tag id; do
+      for b in "${built[@]}"; do
+        if [ "$tag" = "$b" ] && [ "$id" != "$(docker image inspect -f '{{.Id}}' "$b")" ]; then
+          echo "${name#/}"
+        fi
+      done
     done)
 if [ -n "$stale" ]; then
-  echo "These containers still use the old image. Recreate with docker rm -f <name>, then agent-run:"
+  echo "These containers still use an old image. Recreate with docker rm -f <name>, then agent-run:"
   echo "$stale" | sed 's/^/  /'
 fi
