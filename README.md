@@ -62,12 +62,12 @@ If the item exists, containers get it as `LINEAR_API_KEY`; if not, the container
 
 ## SQL Server (optional)
 
-`agent-run -d` runs SQL Server 2022 in its own container next to the agent:
+`agent-run -d` runs SQL Server 2025 in its own container next to the agent:
 
 ```
 network agent-<folder>
 ├── <image>-<folder>    agent; gets MSSQL_HOST and MSSQL_SA_PASSWORD
-└── mssql-<folder>      mcr.microsoft.com/mssql/server:2022-latest, data in volume mssql-<folder>-data
+└── mssql-<folder>      mcr.microsoft.com/mssql/server:2025-latest, data in volume mssql-<folder>-data
 ```
 
 Setup, once:

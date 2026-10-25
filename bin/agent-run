@@ -29,7 +29,7 @@ key=gh-agent-token
 linear_key=linear-agent-token
 db=false
 db_key=mssql-agent-sa
-db_image=mcr.microsoft.com/mssql/server:2022-latest
+db_image=mcr.microsoft.com/mssql/server:2025-latest
 while getopts "a:i:m:k:l:dh" opt; do
   case $opt in
     a) agent=$OPTARG ;;
